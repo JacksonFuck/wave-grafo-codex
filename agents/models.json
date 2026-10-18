@@ -1,0 +1,10 @@
+{
+  "roles": {
+    "coordinator": {"model": "gpt-6.1-sol", "reasoning_effort": "max", "sandbox": "workspace-write"},
+    "planner": {"model": "gpt-6.1-sol", "reasoning_effort": "max", "sandbox": "read-only"},
+    "plan-reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "max", "sandbox": "read-only"},
+    "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "max", "sandbox": "read-only"},
+    "coder": {"model": "gpt-6-luna", "reasoning_effort": "max", "sandbox": "workspace-write"},
+    "corrector": {"model": "gpt-6-luna", "reasoning_effort": "max", "sandbox": "workspace-write"}
+  }
+}

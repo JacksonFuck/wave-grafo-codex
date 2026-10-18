@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wave Grafo Codex"
+  short_description: "Grafo, worktrees e Kanban com Sol e Luna em max"
+  default_prompt: "Use $wave-grafo-codex para executar as fatias prontas com Sol 6.1 max e Luna 6 max."

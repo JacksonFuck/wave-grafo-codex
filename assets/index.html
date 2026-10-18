@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanban local</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f2ec;--fg:#1d1b18;--muted:#6b665d;--card:#fffdf8;--line:#ddd7ca;--col:#ebe7de;--ok:#2f7d4f;--run:#b5651d;--rev:#7a4fa0;--gate:#1f5e8c;--wait:#5b6b7f;--bad:#b23a3a;--unknown:#786b4d}
+@media(prefers-color-scheme:dark){:root{--bg:#141311;--fg:#ece8df;--muted:#9a948a;--card:#211f1b;--line:#33302a;--col:#1a1916;--ok:#5fb383;--run:#e09a55;--rev:#b48ad8;--gate:#6fb0e0;--wait:#8fa1b6;--bad:#e07272;--unknown:#c1ae78}}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 "IBM Plex Sans","Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column}
+header{padding:12px 16px 10px;display:flex;flex-wrap:wrap;gap:7px 16px;align-items:baseline;border-bottom:1px solid var(--line)}
+h1{font:600 19px/1.2 "IBM Plex Serif",Georgia,serif;margin:0}.meta{color:var(--muted);font-size:12px}.error{color:var(--bad)}
+.tools{display:flex;align-items:center;gap:12px;margin-left:auto}.tools label{font-size:12px;color:var(--muted)}input{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);padding:5px 8px;width:min(280px,48vw)}
+.board{flex:1;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,1fr);gap:10px;padding:12px 16px 20px;overflow-x:auto}
+.col{background:var(--col);border:1px solid var(--line);display:flex;flex-direction:column;min-height:0}.col h2{margin:0;padding:9px 10px;font:600 12px/1.2 system-ui;text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;border-top:3px solid var(--c)}
+.col h2 span{color:var(--muted)}.lista{padding:0 8px 8px;overflow-y:auto}.card{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--c);padding:8px 9px;margin-top:8px;overflow-wrap:anywhere}
+.id{font:600 13px ui-monospace,monospace}.tit{margin:4px 0}.tag{display:inline-block;font-size:11px;padding:0 5px;border:1px solid currentColor;margin-left:5px;color:var(--c)}
+.det{font-size:12px;color:var(--muted);margin-top:3px}.det b{color:var(--fg);font-weight:600}a{color:var(--gate)}.vazio{color:var(--muted);font-size:12px;padding:8px 2px}
+@media(max-width:640px){header{padding:10px}.tools{margin-left:0;width:100%}.tools input{flex:1}.board{padding:10px;grid-auto-columns:minmax(250px,86vw)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Kanban</h1>
+  <span class="meta" id="source">Fonte do grafo: carregando…</span>
+  <span class="meta" id="status" role="status" aria-live="polite">Lendo grafo…</span>
+  <div class="tools"><label for="filtro">Filtrar cartões</label><input id="filtro" type="search" autocomplete="off" placeholder="ID, título, agente ou estado"></div>
+</header>
+<main class="board" id="board" aria-label="Colunas do Kanban"><p class="meta">Carregando cartões…</p></main>
+<script>
+"use strict";
+const boardNode=document.getElementById("board");
+const statusNode=document.getElementById("status");
+const sourceNode=document.getElementById("source");
+const filterNode=document.getElementById("filtro");
+let currentBoard=null;
+let lastSuccess=null;
+
+function node(tag,className,text){
+  const element=document.createElement(tag);
+  if(className)element.className=className;
+  if(text!==undefined)element.textContent=String(text??"");
+  return element;
+}
+function utcTime(value){
+  if(!value)return "horário não informado";
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return `${value} UTC`;
+  return `${date.toLocaleString("pt-BR",{timeZone:"UTC",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})} UTC`;
+}
+function localTime(value=new Date()){
+  return value.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+function safePrUrl(value){
+  try{
+    const url=new URL(value);
+    return url.protocol==="https:"&&url.hostname==="github.com"&&/^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*$/.test(url.pathname)?url.href:null;
+  }catch(_){return null;}
+}
+function addDetail(parent,label,value){
+  const line=node("div","det");
+  line.append(document.createTextNode(`${label}: `));
+  const strong=node("b","",value||"—");
+  line.append(strong);
+  parent.append(line);
+}
+function cardNode(card,column){
+  const colors=new Set(["wait","rev","run","gate","ok","bad","unknown"]);
+  const color=colors.has(column.color)?column.color:"unknown";
+  const article=node("article","card");
+  article.style.setProperty("--c",`var(--${color})`);
+  const heading=node("div");
+  heading.append(node("span","id",`#${card.id}`),node("span","tag",card.state));
+  article.append(heading,node("div","tit",card.title));
+  addDetail(article,"agente",card.agent);
+  addDetail(article,"role",card.role);
+  addDetail(article,"modelo",card.model);
+  addDetail(article,"reasoning_effort",card.reasoning_effort);
+  if(card.deps&&card.deps.length){
+    const line=node("div","det");
+    line.append(document.createTextNode("depende de: "));
+    line.append(node("b","",card.deps.join(", ")));
+    article.append(line);
+  }
+  if(card.score)addDetail(article,"nota",card.score);
+  if(card.pr_number){
+    const line=node("div","det");
+    const url=safePrUrl(card.pr_url);
+    if(url){
+      line.append(document.createTextNode("PR: "));
+      const link=node("a","",`#${card.pr_number}`);
+      link.href=url;link.target="_blank";link.rel="noopener noreferrer";
+      line.append(link);
+    }else line.textContent=`PR #${card.pr_number}`;
+    article.append(line);
+  }else if(card.pr_invalid){addDetail(article,"PR","inválido");}
+  const event=node("div","det");
+  event.append(document.createTextNode("último evento: "));
+  event.append(node("b","",card.last_event||card.state));
+  event.append(document.createTextNode(` · ${utcTime(card.last_time_utc)}`));
+  article.append(event);
+  if(card.note){const note=node("div","det");note.textContent=`nota: ${card.note}`;article.append(note);}
+  return article;
+}
+function renderBoard(){
+  if(!currentBoard)return;
+  const query=filterNode.value.trim().toLocaleLowerCase("pt-BR");
+  const columns=[];
+  for(const column of currentBoard.columns){
+    const section=node("section","col");
+    section.style.setProperty("--c",`var(--${column.color})`);
+    const cards=column.cards.filter(card=>!query||[card.id,card.title,card.state,card.agent,card.role,card.model,card.reasoning_effort].join(" ").toLocaleLowerCase("pt-BR").includes(query));
+    const title=node("h2");title.append(document.createTextNode(column.name),node("span","",String(cards.length)));
+    const list=node("div","lista");
+    if(cards.length)for(const card of cards)list.append(cardNode(card,column));
+    else list.append(node("p","vazio",query?"nenhum cartão corresponde ao filtro":"vazio"));
+    section.append(title,list);columns.push(section);
+  }
+  boardNode.replaceChildren(...columns);
+}
+function refreshStatus(){
+  statusNode.className="meta";
+  statusNode.textContent=`Atualizado às ${localTime(lastSuccess)} (hora local) · atualiza a cada 15 s`;
+}
+async function loadBoard(){
+  try{
+    const response=await fetch(`/board.json?t=${Date.now()}`,{cache:"no-store"});
+    const payload=await response.json();
+    if(!response.ok||payload.error){
+      const error=new Error(payload.error||`resposta HTTP ${response.status}`);
+      error.source=payload.source;throw error;
+    }
+    currentBoard=payload;lastSuccess=new Date();
+    sourceNode.textContent=`Fonte do grafo: ${payload.source}`;
+    refreshStatus();renderBoard();
+  }catch(error){
+    if(error.source)sourceNode.textContent=`Fonte do grafo: ${error.source}`;
+    statusNode.className="meta error";
+    const last=lastSuccess?`último sucesso às ${localTime(lastSuccess)} (hora local)`:"sem leitura bem-sucedida ainda";
+    statusNode.textContent=`Erro às ${localTime()}: ${error.message} · ${last}`;
+  }
+}
+filterNode.addEventListener("input",renderBoard);
+loadBoard();
+setInterval(loadBoard,15000);
+</script>
+</body>
+</html>
